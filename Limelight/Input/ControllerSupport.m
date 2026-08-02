@@ -20,6 +20,7 @@
 @import AudioToolbox;
 
 static const double MOUSE_SPEED_DIVISOR = 1.25;
+static const uint16_t CONTROLLER_SLOT_COUNT = 4;
 
 @implementation ControllerSupport {
     id _controllerConnectObserver;
@@ -227,6 +228,10 @@ static NSString *adaptiveTriggerPayloadHash(NSData *payload)
                 leftPayload:(NSData*)leftPayload
                rightPayload:(NSData*)rightPayload
 {
+    if (controllerNumber >= CONTROLLER_SLOT_COUNT) {
+        return;
+    }
+
     CFTimeInterval callbackTime = [self adaptiveTriggerMonotonicTimestamp];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!self->_adaptiveTriggerStreamActive) {
@@ -1253,7 +1258,7 @@ static NSString *adaptiveTriggerPayloadHash(NSData *payload)
 }
 
 -(Controller*) assignController:(GCController*)controller {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CONTROLLER_SLOT_COUNT; i++) {
         if (!(_controllerNumbers & (1 << i))) {
             _controllerNumbers |= (1 << i);
             controller.playerIndex = i;

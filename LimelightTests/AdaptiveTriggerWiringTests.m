@@ -27,6 +27,8 @@
 - (void)unregisterControllerCallbacks:(GCController *)controller;
 - (void)reportControllerArrival:(Controller *)controller;
 - (void)updateAutoOnScreenControlMode;
+- (void)applicationWillResignActive:(NSNotification *)notification;
+- (void)applicationDidBecomeActive:(NSNotification *)notification;
 @end
 
 @interface MLAdaptiveTriggerEndpointSpy : NSObject <MLAdaptiveTriggerEndpoint>
@@ -449,7 +451,7 @@
     support.resolvedEndpoint = nil;
 
     [self waitForMainQueueAfterInvokingSupport:support
-                              controllerNumber:7
+                              controllerNumber:3
                                     eventFlags:DS_EFFECT_LEFT_TRIGGER | DS_EFFECT_RIGHT_TRIGGER
                                       typeLeft:0x05
                                      typeRight:0x05
@@ -457,7 +459,7 @@
                                   rightPayload:off
                                 beforeDraining:nil];
 
-    XCTAssertEqualObjects(support.resolvedControllerNumbers, (@[@7]));
+    XCTAssertEqualObjects(support.resolvedControllerNumbers, (@[@3]));
 }
 
 - (void)testProductionResolverRejectsAbsentAndNonDualSenseControllers
@@ -598,6 +600,72 @@
     XCTAssertEqualObjects(endpoint.appliedKinds,
                           (@[@(MLAdaptiveTriggerFeedback), @(MLAdaptiveTriggerWeapon)]));
     XCTAssertTrue([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+}
+
+- (void)testStreamViewControllerPausesOnResignActiveAndReappliesOnBecomeActive
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.endpointsByControllerNumber[@0] = endpoint;
+    [support setValue:[@{@0: [NSObject new]} mutableCopy] forKey:@"_controllers"];
+
+    Class viewControllerClass = NSClassFromString(@"StreamFrameViewController");
+    XCTAssertNotNil(viewControllerClass);
+    id viewController = [[viewControllerClass alloc] init];
+    [viewController setValue:support forKey:@"_controllerSupport"];
+
+    NSNotification *resignNotification =
+        [NSNotification notificationWithName:UIApplicationWillResignActiveNotification object:nil];
+    [(id)viewController applicationWillResignActive:resignNotification];
+    XCTAssertEqual(endpoint.bothOffCount, 1u);
+    XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:0
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x21
+                                     typeRight:0x05
+                                   leftPayload:feedback
+                                  rightPayload:off
+                                beforeDraining:nil];
+    XCTAssertEqual(endpoint.appliedKinds.count, 0u,
+                   @"resign-active callbacks must update cache without touching GameController");
+
+    NSNotification *activeNotification =
+        [NSNotification notificationWithName:UIApplicationDidBecomeActiveNotification object:nil];
+    [(id)viewController applicationDidBecomeActive:activeNotification];
+    XCTAssertEqualObjects(endpoint.appliedKinds, (@[@(MLAdaptiveTriggerFeedback)]));
+    XCTAssertTrue([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+}
+
+- (void)testInvalidControllerSlotsCannotGrowCacheDiagnosticsOrReachEndpoint
+{
+    const uint8_t malformed[10] = { 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    NSData *malformedData = [NSData dataWithBytes:malformed length:10];
+    NSData *offData = [NSData dataWithBytes:off length:10];
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.resolvedEndpoint = endpoint;
+
+    for (uint16_t controllerNumber = 4; controllerNumber < 1028; controllerNumber++) {
+        [(id)support setAdaptiveTriggers:controllerNumber
+                              eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                typeLeft:0x21
+                               typeRight:0x05
+                             leftPayload:malformedData
+                            rightPayload:offData];
+    }
+    [self drainMainQueue];
+
+    XCTAssertEqual([[support valueForKey:@"_adaptiveTriggerEffectsBySlot"] count], 0u);
+    XCTAssertEqual([[support valueForKey:@"_adaptiveTriggerDiagnosticStateByKey"] count], 0u);
+    XCTAssertEqual(support.diagnosticMessages.count, 0u);
+    XCTAssertEqual(support.resolvedControllerNumbers.count, 0u);
+    XCTAssertEqual(endpoint.appliedSides.count, 0u);
+    XCTAssertEqual(endpoint.offSides.count, 0u);
 }
 
 - (void)testDisconnectTurnsBothTriggersOffBeforeControllerDictionaryRemoval

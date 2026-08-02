@@ -323,6 +323,8 @@
 
 // This will fire if the user opens control center or gets a low battery message
 - (void)applicationWillResignActive:(NSNotification *)notification {
+    [_controllerSupport pauseAdaptiveTriggerEffectsForBackground];
+
     if (_inactivityTimer != nil) {
         [_inactivityTimer invalidate];
     }
