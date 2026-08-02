@@ -346,6 +346,20 @@ void ClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16
     [_callbacks setMotionEventState:controllerNumber motionType:motionType reportRateHz:reportRateHz];
 }
 
+void ClSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags,
+                           uint8_t typeLeft, uint8_t typeRight,
+                           uint8_t *left, uint8_t *right)
+{
+    NSData *leftCopy = [NSData dataWithBytes:left length:DS_EFFECT_PAYLOAD_SIZE];
+    NSData *rightCopy = [NSData dataWithBytes:right length:DS_EFFECT_PAYLOAD_SIZE];
+    [_callbacks setAdaptiveTriggers:controllerNumber
+                         eventFlags:eventFlags
+                           typeLeft:typeLeft
+                          typeRight:typeRight
+                        leftPayload:leftCopy
+                       rightPayload:rightCopy];
+}
+
 void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b)
 {
     [_callbacks setControllerLed:controllerNumber r:r g:g b:b];
@@ -471,6 +485,7 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
     _clCallbacks.rumbleTriggers = ClRumbleTriggers;
     _clCallbacks.setMotionEventState = ClSetMotionEventState;
     _clCallbacks.setControllerLED = ClSetControllerLED;
+    _clCallbacks.setAdaptiveTriggers = ClSetAdaptiveTriggers;
 
     return self;
 }

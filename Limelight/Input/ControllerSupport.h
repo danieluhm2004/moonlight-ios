@@ -8,6 +8,7 @@
 
 #import "StreamConfiguration.h"
 #import "Controller.h"
+#import "AdaptiveTriggerEndpoint.h"
 
 @class OnScreenControls;
 
@@ -19,7 +20,7 @@
 
 @end
 
-@interface ControllerSupport : NSObject
+@interface ControllerSupport : NSObject <MLAdaptiveTriggerResolving>
 
 -(id) initWithConfig:(StreamConfiguration*)streamConfig delegate:(id<ControllerSupportDelegate>)delegate;
 -(void) connectionEstablished;
@@ -44,6 +45,12 @@
 -(void) rumble:(unsigned short)controllerNumber lowFreqMotor:(unsigned short)lowFreqMotor highFreqMotor:(unsigned short)highFreqMotor;
 -(void) rumbleTriggers:(uint16_t)controllerNumber leftTrigger:(uint16_t)leftTrigger rightTrigger:(uint16_t)rightTrigger;
 -(void) setMotionEventState:(uint16_t)controllerNumber motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz;
+-(void) setAdaptiveTriggers:(uint16_t)controllerNumber
+                 eventFlags:(uint8_t)eventFlags
+                   typeLeft:(uint8_t)typeLeft
+                  typeRight:(uint8_t)typeRight
+                leftPayload:(NSData*)leftPayload
+               rightPayload:(NSData*)rightPayload;
 -(void) setControllerLed:(uint16_t)controllerNumber r:(uint8_t)r g:(uint8_t)g b:(uint8_t)b;
 
 +(int) getConnectedGamepadMask:(StreamConfiguration*)streamConfig;

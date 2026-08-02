@@ -9,6 +9,11 @@
 /* Begin PBXBuildFile section */
 		3A1000013100000000000001 /* AdaptiveTriggerDecoderTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000033100000000000003 /* AdaptiveTriggerDecoderTests.m */; };
 		3A1000023100000000000002 /* AdaptiveTriggerDecoder.c in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000053100000000000005 /* AdaptiveTriggerDecoder.c */; };
+		3A1000213100000000000021 /* AdaptiveTriggerWiringTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000223100000000000022 /* AdaptiveTriggerWiringTests.m */; };
+		3A1000243100000000000024 /* AdaptiveTriggerDecoder.c in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000053100000000000005 /* AdaptiveTriggerDecoder.c */; };
+		3A1000253100000000000025 /* AdaptiveTriggerDecoder.c in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000053100000000000005 /* AdaptiveTriggerDecoder.c */; };
+		3A1000263100000000000026 /* AdaptiveTriggerEndpoint.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000283100000000000028 /* AdaptiveTriggerEndpoint.m */; };
+		3A1000273100000000000027 /* AdaptiveTriggerEndpoint.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A1000283100000000000028 /* AdaptiveTriggerEndpoint.m */; };
 		3A1000123100000000000012 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1000113100000000000011 /* XCTest.framework */; };
 		693B3A9B218638CD00982F7B /* Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = 693B3A9A218638CD00982F7B /* Settings.bundle */; };
 		98181BE92791277400E43572 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 98181BE82791275D00E43572 /* libSDL2.a */; };
@@ -183,6 +188,9 @@
 		3A1000033100000000000003 /* AdaptiveTriggerDecoderTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AdaptiveTriggerDecoderTests.m; sourceTree = "<group>"; };
 		3A1000043100000000000004 /* AdaptiveTriggerDecoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AdaptiveTriggerDecoder.h; sourceTree = "<group>"; };
 		3A1000053100000000000005 /* AdaptiveTriggerDecoder.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = AdaptiveTriggerDecoder.c; sourceTree = "<group>"; };
+		3A1000223100000000000022 /* AdaptiveTriggerWiringTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AdaptiveTriggerWiringTests.m; sourceTree = "<group>"; };
+		3A1000233100000000000023 /* AdaptiveTriggerEndpoint.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AdaptiveTriggerEndpoint.h; sourceTree = "<group>"; };
+		3A1000283100000000000028 /* AdaptiveTriggerEndpoint.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AdaptiveTriggerEndpoint.m; sourceTree = "<group>"; };
 		3A1000063100000000000006 /* LimelightTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimelightTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A1000113100000000000011 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		566E9D2B2770B23A00EF7BFE /* Moonlight v1.7.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "Moonlight v1.7.xcdatamodel"; sourceTree = "<group>"; };
@@ -392,6 +400,7 @@
 			isa = PBXGroup;
 			children = (
 				3A1000033100000000000003 /* AdaptiveTriggerDecoderTests.m */,
+				3A1000223100000000000022 /* AdaptiveTriggerWiringTests.m */,
 			);
 			path = LimelightTests;
 			sourceTree = "<group>";
@@ -535,6 +544,8 @@
 		FB89460919F646E200339C8A /* Input */ = {
 			isa = PBXGroup;
 			children = (
+				3A1000233100000000000023 /* AdaptiveTriggerEndpoint.h */,
+				3A1000283100000000000028 /* AdaptiveTriggerEndpoint.m */,
 				3A1000043100000000000004 /* AdaptiveTriggerDecoder.h */,
 				3A1000053100000000000005 /* AdaptiveTriggerDecoder.c */,
 				FB89460A19F646E200339C8A /* ControllerSupport.h */,
@@ -899,6 +910,7 @@
 			files = (
 				3A1000023100000000000002 /* AdaptiveTriggerDecoder.c in Sources */,
 				3A1000013100000000000001 /* AdaptiveTriggerDecoderTests.m in Sources */,
+				3A1000213100000000000021 /* AdaptiveTriggerWiringTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -906,6 +918,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A1000253100000000000025 /* AdaptiveTriggerDecoder.c in Sources */,
+				3A1000273100000000000027 /* AdaptiveTriggerEndpoint.m in Sources */,
 				9827E7A42514366900F25707 /* HapticContext.m in Sources */,
 				9897B6A62212732C00966419 /* Controller.m in Sources */,
 				9865DC3E21332D660005B9B9 /* MainFrameViewController.m in Sources */,
@@ -959,6 +973,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A1000243100000000000024 /* AdaptiveTriggerDecoder.c in Sources */,
+				3A1000263100000000000026 /* AdaptiveTriggerEndpoint.m in Sources */,
 				FB290D0719B2C406004C83CF /* Limelight.xcdatamodeld in Sources */,
 				9819CC22254F180F008A7C8E /* AbsoluteTouchHandler.m in Sources */,
 				9819CC14254F107A008A7C8E /* RelativeTouchHandler.m in Sources */,
@@ -1059,7 +1075,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Limelight/Input";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Limelight/Input",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/src",
+				);
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1083,7 +1102,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Limelight/Input";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Limelight/Input",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/src",
+				);
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

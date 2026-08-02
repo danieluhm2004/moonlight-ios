@@ -552,6 +552,20 @@
     [_controllerSupport setMotionEventState:controllerNumber motionType:motionType reportRateHz:reportRateHz];
 }
 
+- (void) setAdaptiveTriggers:(uint16_t)controllerNumber
+                  eventFlags:(uint8_t)eventFlags
+                    typeLeft:(uint8_t)typeLeft
+                   typeRight:(uint8_t)typeRight
+                 leftPayload:(NSData *)leftPayload
+                rightPayload:(NSData *)rightPayload {
+    [_controllerSupport setAdaptiveTriggers:controllerNumber
+                                 eventFlags:eventFlags
+                                   typeLeft:typeLeft
+                                  typeRight:typeRight
+                                leftPayload:leftPayload
+                               rightPayload:rightPayload];
+}
+
 - (void) setControllerLed:(uint16_t)controllerNumber r:(uint8_t)r g:(uint8_t)g b:(uint8_t)b {
     Log(LOG_I, @"Set controller LED on gamepad %d: l%02x%02x%02x", controllerNumber, r, g, b);
     

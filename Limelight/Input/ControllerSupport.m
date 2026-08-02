@@ -8,6 +8,7 @@
 
 #import "ControllerSupport.h"
 #import "Controller.h"
+#import "AdaptiveTriggerEndpoint.h"
 
 #import "OnScreenControls.h"
 
@@ -82,6 +83,60 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     
     [controller.leftTriggerMotor setMotorAmplitude:leftTrigger];
     [controller.rightTriggerMotor setMotorAmplitude:rightTrigger];
+}
+
+static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
+                                     MLAdaptiveTriggerSide side,
+                                     uint8_t type,
+                                     NSData *payload)
+{
+    MLAdaptiveTriggerEffect effect;
+    if (MLDecodeAdaptiveTrigger(type, payload.bytes, payload.length, &effect)) {
+        [endpoint applyEffect:effect side:side];
+    }
+    else {
+        [endpoint setOffForSide:side];
+    }
+}
+
+-(void) setAdaptiveTriggers:(uint16_t)controllerNumber
+                 eventFlags:(uint8_t)eventFlags
+                   typeLeft:(uint8_t)typeLeft
+                  typeRight:(uint8_t)typeRight
+                leftPayload:(NSData*)leftPayload
+               rightPayload:(NSData*)rightPayload
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id<MLAdaptiveTriggerEndpoint> endpoint = [self endpointForControllerNumber:controllerNumber];
+        if (endpoint == nil) {
+            return;
+        }
+
+        if ((eventFlags & DS_EFFECT_LEFT_TRIGGER) != 0) {
+            applyAdaptiveTriggerSide(endpoint, MLAdaptiveTriggerSideLeft,
+                                     typeLeft, leftPayload);
+        }
+        if ((eventFlags & DS_EFFECT_RIGHT_TRIGGER) != 0) {
+            applyAdaptiveTriggerSide(endpoint, MLAdaptiveTriggerSideRight,
+                                     typeRight, rightPayload);
+        }
+    });
+}
+
+-(id<MLAdaptiveTriggerEndpoint>) endpointForControllerNumber:(uint16_t)number
+{
+    NSAssert([NSThread isMainThread], @"GameController lookup must remain on the main queue");
+    if (@available(iOS 15.4, tvOS 15.4, *)) {
+        Controller *controller = [_controllers objectForKey:@(number)];
+        GCExtendedGamepad *profile = controller.gamepad.extendedGamepad;
+        if (![profile isKindOfClass:[GCDualSenseGamepad class]]) {
+            return nil;
+        }
+
+        return [[MLAppleAdaptiveTriggerEndpoint alloc]
+                initWithGamepad:(GCDualSenseGamepad *)profile];
+    }
+    return nil;
 }
 
 - (void) setMotionEventState:(uint16_t)controllerNumber motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz
