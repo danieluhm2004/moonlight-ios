@@ -13,6 +13,20 @@
                    typeRight:(uint8_t)typeRight
                  leftPayload:(NSData *)leftPayload
                 rightPayload:(NSData *)rightPayload;
+- (void)requestTerminalAdaptiveTriggerStop;
+- (void)pauseAdaptiveTriggerEffectsForBackground;
+- (void)resumeAdaptiveTriggerEffectsAfterForeground;
+- (void)resetAdaptiveTriggerEffectsForControllerNumber:(uint16_t)controllerNumber;
+- (CFTimeInterval)adaptiveTriggerMonotonicTimestamp;
+- (void)emitAdaptiveTriggerDiagnostic:(NSString *)message;
+- (void)initializeControllerHaptics:(Controller *)controller;
+- (void)cleanupControllerHaptics:(Controller *)controller;
+- (void)cleanupControllerMotion:(Controller *)controller;
+- (void)cleanupControllerBattery:(Controller *)controller;
+- (void)registerControllerCallbacks:(GCController *)controller;
+- (void)unregisterControllerCallbacks:(GCController *)controller;
+- (void)reportControllerArrival:(Controller *)controller;
+- (void)updateAutoOnScreenControlMode;
 @end
 
 @interface MLAdaptiveTriggerEndpointSpy : NSObject <MLAdaptiveTriggerEndpoint>
@@ -21,6 +35,8 @@
 @property(nonatomic) NSMutableArray<NSNumber *> *offSides;
 @property(nonatomic) NSMutableArray<NSNumber *> *mainThreadObservations;
 @property(nonatomic) NSUInteger bothOffCount;
+@property(nonatomic, copy) void (^onApply)(void);
+@property(nonatomic, copy) void (^onBothOff)(void);
 @end
 
 @implementation MLAdaptiveTriggerEndpointSpy
@@ -39,6 +55,9 @@
 
 - (void)applyEffect:(MLAdaptiveTriggerEffect)effect side:(MLAdaptiveTriggerSide)side
 {
+    if (self.onApply != nil) {
+        self.onApply();
+    }
     [self.appliedSides addObject:@(side)];
     [self.appliedKinds addObject:@(effect.kind)];
     [self.mainThreadObservations addObject:@([NSThread isMainThread])];
@@ -52,6 +71,9 @@
 
 - (void)setBothOff
 {
+    if (self.onBothOff != nil) {
+        self.onBothOff();
+    }
     self.bothOffCount++;
     [self.mainThreadObservations addObject:@([NSThread isMainThread])];
 }
@@ -62,16 +84,36 @@
 @property(nonatomic) id<MLAdaptiveTriggerEndpoint> resolvedEndpoint;
 @property(nonatomic) NSMutableArray<NSNumber *> *resolvedControllerNumbers;
 @property(nonatomic) NSMutableArray<NSNumber *> *resolverMainThreadObservations;
+@property(nonatomic) NSMutableDictionary<NSNumber *, id<MLAdaptiveTriggerEndpoint>> *endpointsByControllerNumber;
+@property(nonatomic) NSMutableArray<NSString *> *diagnosticMessages;
+@property(nonatomic) NSMutableArray<NSNumber *> *monotonicTimestamps;
 @end
 
 @implementation MLAdaptiveTriggerControllerSupportSpy
+
+- (void)initializeSpyCollections
+{
+    _resolvedControllerNumbers = [NSMutableArray array];
+    _resolverMainThreadObservations = [NSMutableArray array];
+    _endpointsByControllerNumber = [NSMutableDictionary dictionary];
+    _diagnosticMessages = [NSMutableArray array];
+    _monotonicTimestamps = [NSMutableArray array];
+}
 
 - (instancetype)init
 {
     self = [super init];
     if (self) {
-        _resolvedControllerNumbers = [NSMutableArray array];
-        _resolverMainThreadObservations = [NSMutableArray array];
+        [self initializeSpyCollections];
+    }
+    return self;
+}
+
+- (instancetype)initWithConfig:(StreamConfiguration *)streamConfig delegate:(id<ControllerSupportDelegate>)delegate
+{
+    self = [super initWithConfig:streamConfig delegate:delegate];
+    if (self) {
+        [self initializeSpyCollections];
     }
     return self;
 }
@@ -80,8 +122,34 @@
 {
     [self.resolvedControllerNumbers addObject:@(number)];
     [self.resolverMainThreadObservations addObject:@([NSThread isMainThread])];
-    return self.resolvedEndpoint;
+    return self.endpointsByControllerNumber[@(number)] ?: self.resolvedEndpoint;
 }
+
+- (CFTimeInterval)adaptiveTriggerMonotonicTimestamp
+{
+    @synchronized (self.monotonicTimestamps) {
+        if (self.monotonicTimestamps.count == 0) {
+            return 0;
+        }
+        CFTimeInterval timestamp = self.monotonicTimestamps.firstObject.doubleValue;
+        [self.monotonicTimestamps removeObjectAtIndex:0];
+        return timestamp;
+    }
+}
+
+- (void)emitAdaptiveTriggerDiagnostic:(NSString *)message
+{
+    [self.diagnosticMessages addObject:message];
+}
+
+- (void)initializeControllerHaptics:(Controller *)controller {}
+- (void)cleanupControllerHaptics:(Controller *)controller {}
+- (void)cleanupControllerMotion:(Controller *)controller {}
+- (void)cleanupControllerBattery:(Controller *)controller {}
+- (void)registerControllerCallbacks:(GCController *)controller {}
+- (void)unregisterControllerCallbacks:(GCController *)controller {}
+- (void)reportControllerArrival:(Controller *)controller {}
+- (void)updateAutoOnScreenControlMode {}
 
 @end
 
@@ -132,6 +200,22 @@
 @end
 
 @implementation MLNonDualSenseControllerStub
+@end
+
+@interface MLGamepadProfileStub : NSObject
+@property(nonatomic) id buttonOptions;
+@property(nonatomic) id buttonHome;
+@end
+
+@implementation MLGamepadProfileStub
+@end
+
+@interface MLControllerDeviceStub : NSObject
+@property(nonatomic) MLGamepadProfileStub *extendedGamepad;
+@property(nonatomic) GCControllerPlayerIndex playerIndex;
+@end
+
+@implementation MLControllerDeviceStub
 @end
 
 @interface AdaptiveTriggerWiringTests : XCTestCase
@@ -188,6 +272,38 @@
     configuration.appVersion = @"1.0";
     configuration.riKey = [NSMutableData dataWithLength:16];
     return [[Connection alloc] initWithConfig:configuration renderer:nil connectionCallbacks:callbacks];
+}
+
+- (void)drainMainQueue
+{
+    XCTestExpectation *drained = [self expectationWithDescription:@"main queue drained"];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [drained fulfill];
+    });
+    [self waitForExpectations:@[drained] timeout:2.0];
+}
+
+- (BOOL)requireLifecycleSelector:(SEL)selector onSupport:(ControllerSupport *)support
+{
+    BOOL responds = [support respondsToSelector:selector];
+    XCTAssertTrue(responds, @"ControllerSupport must implement %@", NSStringFromSelector(selector));
+    return responds;
+}
+
+- (BOOL)requireAdaptiveTriggerLifecycleStateOnSupport:(ControllerSupport *)support
+{
+    const char *names[] = {
+        "_adaptiveTriggerStreamActive",
+        "_adaptiveTriggerForegroundActive",
+        "_adaptiveTriggerEffectsBySlot",
+    };
+    BOOL complete = YES;
+    for (NSUInteger index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        BOOL exists = class_getInstanceVariable([ControllerSupport class], names[index]) != NULL;
+        XCTAssertTrue(exists, @"ControllerSupport must own main-queue lifecycle field %s", names[index]);
+        complete &= exists;
+    }
+    return complete;
 }
 
 - (void)testRegistersCallbackAndCopiesBorrowedPayloadsBeforeReturning
@@ -362,6 +478,275 @@
     controller.gamepad = (id)nonDualSense;
     [support setValue:[@{@4: controller} mutableCopy] forKey:@"_controllers"];
     XCTAssertNil([(id<MLAdaptiveTriggerResolving>)support endpointForControllerNumber:4]);
+}
+
+
+#pragma mark - Lifecycle safety
+
+- (void)testAdaptiveTriggerLifecycleStartsActiveAndAppliesFirstUpdate
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.resolvedEndpoint = endpoint;
+
+    if (![self requireAdaptiveTriggerLifecycleStateOnSupport:support]) {
+        return;
+    }
+    XCTAssertTrue([[support valueForKey:@"_adaptiveTriggerStreamActive"] boolValue]);
+    XCTAssertTrue([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:0
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x21
+                                     typeRight:0x05
+                                   leftPayload:feedback
+                                  rightPayload:off
+                                beforeDraining:nil];
+
+    XCTAssertEqualObjects(endpoint.appliedKinds, (@[@(MLAdaptiveTriggerFeedback)]));
+}
+
+- (void)testQueuedUpdateAfterTerminalStopCannotRestoreResistance
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.endpointsByControllerNumber[@1] = endpoint;
+    [support setValue:[@{@1: [NSObject new]} mutableCopy] forKey:@"_controllers"];
+    NSData *feedbackData = [NSData dataWithBytes:feedback length:10];
+    NSData *offData = [NSData dataWithBytes:off length:10];
+
+    if (![self requireLifecycleSelector:@selector(requestTerminalAdaptiveTriggerStop) onSupport:support] ||
+        ![self requireAdaptiveTriggerLifecycleStateOnSupport:support]) {
+        return;
+    }
+
+    endpoint.onBothOff = ^{
+        XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerStreamActive"] boolValue]);
+        XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+        XCTAssertEqual([[support valueForKey:@"_adaptiveTriggerEffectsBySlot"] count], 0u);
+    };
+
+    dispatch_semaphore_t returned = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [(id)support requestTerminalAdaptiveTriggerStop];
+        [(id)support setAdaptiveTriggers:1
+                              eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                typeLeft:0x21
+                               typeRight:0x05
+                             leftPayload:feedbackData
+                            rightPayload:offData];
+        dispatch_semaphore_signal(returned);
+    });
+    XCTAssertEqual(dispatch_semaphore_wait(returned,
+                                           dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), 0);
+    [self drainMainQueue];
+
+    XCTAssertEqual(endpoint.bothOffCount, 1u);
+    XCTAssertEqual(endpoint.appliedSides.count, 0u);
+}
+
+- (void)testBackgroundUpdatesCacheOnlyAndForegroundReappliesLatestSelectedState
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t weapon[10] = { 0x84, 0, 0x05, 0, 0, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.endpointsByControllerNumber[@2] = endpoint;
+    [support setValue:[@{@2: [NSObject new]} mutableCopy] forKey:@"_controllers"];
+
+    if (![self requireLifecycleSelector:@selector(pauseAdaptiveTriggerEffectsForBackground) onSupport:support] ||
+        ![self requireLifecycleSelector:@selector(resumeAdaptiveTriggerEffectsAfterForeground) onSupport:support] ||
+        ![self requireAdaptiveTriggerLifecycleStateOnSupport:support]) {
+        return;
+    }
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:2
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x21
+                                     typeRight:0x05
+                                   leftPayload:feedback
+                                  rightPayload:off
+                                beforeDraining:nil];
+    XCTAssertEqualObjects(endpoint.appliedKinds, (@[@(MLAdaptiveTriggerFeedback)]));
+
+    endpoint.onBothOff = ^{
+        XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+        XCTAssertEqual([[support valueForKey:@"_adaptiveTriggerEffectsBySlot"] count], 1u);
+    };
+    [(id)support pauseAdaptiveTriggerEffectsForBackground];
+    XCTAssertEqual(endpoint.bothOffCount, 1u);
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:2
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x25
+                                     typeRight:0x05
+                                   leftPayload:weapon
+                                  rightPayload:off
+                                beforeDraining:nil];
+    XCTAssertEqual(endpoint.appliedKinds.count, 1u,
+                   @"background callbacks may update cache but must not touch GameController");
+
+    [(id)support resumeAdaptiveTriggerEffectsAfterForeground];
+    XCTAssertEqualObjects(endpoint.appliedKinds,
+                          (@[@(MLAdaptiveTriggerFeedback), @(MLAdaptiveTriggerWeapon)]));
+    XCTAssertTrue([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+}
+
+- (void)testDisconnectTurnsBothTriggersOffBeforeControllerDictionaryRemoval
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    StreamConfiguration *configuration = [[StreamConfiguration alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support =
+        [[MLAdaptiveTriggerControllerSupportSpy alloc] initWithConfig:configuration delegate:nil];
+    [self addTeardownBlock:^{ [support cleanup]; }];
+    support.endpointsByControllerNumber[@3] = endpoint;
+    MLControllerDeviceStub *device = [[MLControllerDeviceStub alloc] init];
+    device.extendedGamepad = [[MLGamepadProfileStub alloc] init];
+    device.playerIndex = 3;
+    Controller *controller = [[Controller alloc] init];
+    controller.playerIndex = 3;
+    controller.gamepad = (id)device;
+    [support setValue:[@{@3: controller} mutableCopy] forKey:@"_controllers"];
+    [support setValue:@(1 << 3) forKey:@"_controllerNumbers"];
+
+    if (![self requireAdaptiveTriggerLifecycleStateOnSupport:support]) {
+        return;
+    }
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:3
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x21
+                                     typeRight:0x05
+                                   leftPayload:feedback
+                                  rightPayload:off
+                                beforeDraining:nil];
+
+    endpoint.onBothOff = ^{
+        NSDictionary *controllers = [support valueForKey:@"_controllers"];
+        XCTAssertNotNil(controllers[@3], @"disconnect cleanup must run before slot removal");
+    };
+    [[NSNotificationCenter defaultCenter] postNotificationName:GCControllerDidDisconnectNotification
+                                                        object:device];
+    XCTAssertEqual(endpoint.bothOffCount, 1u);
+    XCTAssertNil([[support valueForKey:@"_controllers"] objectForKey:@3]);
+    XCTAssertNil([[support valueForKey:@"_adaptiveTriggerEffectsBySlot"] objectForKey:@3]);
+}
+
+- (void)testSlotReassignmentDoesNotReplayPreviousControllersCachedEffect
+{
+    const uint8_t feedback[10] = { 0x24, 0, 0x80, 0x80, 0x03, 0, 0, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *oldEndpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerEndpointSpy *newEndpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    StreamConfiguration *configuration = [[StreamConfiguration alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support =
+        [[MLAdaptiveTriggerControllerSupportSpy alloc] initWithConfig:configuration delegate:nil];
+    [self addTeardownBlock:^{ [support cleanup]; }];
+    support.endpointsByControllerNumber[@0] = oldEndpoint;
+    MLControllerDeviceStub *oldDevice = [[MLControllerDeviceStub alloc] init];
+    oldDevice.extendedGamepad = [[MLGamepadProfileStub alloc] init];
+    oldDevice.playerIndex = 0;
+    Controller *oldController = [[Controller alloc] init];
+    oldController.playerIndex = 0;
+    oldController.gamepad = (id)oldDevice;
+    [support setValue:[@{@0: oldController} mutableCopy] forKey:@"_controllers"];
+    [support setValue:@1 forKey:@"_controllerNumbers"];
+
+    if (![self requireLifecycleSelector:@selector(resumeAdaptiveTriggerEffectsAfterForeground) onSupport:support]) {
+        return;
+    }
+
+    [self waitForMainQueueAfterInvokingSupport:support
+                              controllerNumber:0
+                                    eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                      typeLeft:0x21
+                                     typeRight:0x05
+                                   leftPayload:feedback
+                                  rightPayload:off
+                                beforeDraining:nil];
+    [[NSNotificationCenter defaultCenter] postNotificationName:GCControllerDidDisconnectNotification
+                                                        object:oldDevice];
+
+    support.endpointsByControllerNumber[@0] = newEndpoint;
+    MLControllerDeviceStub *newDevice = [[MLControllerDeviceStub alloc] init];
+    newDevice.extendedGamepad = [[MLGamepadProfileStub alloc] init];
+    [[NSNotificationCenter defaultCenter] postNotificationName:GCControllerDidConnectNotification
+                                                        object:newDevice];
+    [(id)support resumeAdaptiveTriggerEffectsAfterForeground];
+
+    XCTAssertEqual(oldEndpoint.bothOffCount, 1u);
+    XCTAssertEqual(newEndpoint.bothOffCount, 1u);
+    XCTAssertEqual(newEndpoint.appliedSides.count, 0u);
+    Controller *assignedController = [[support valueForKey:@"_controllers"] objectForKey:@0];
+    XCTAssertEqualObjects(assignedController.gamepad, (id)newDevice);
+}
+
+- (void)testRepeatedTerminalStopIsIdempotentAndNeverReactivatesStream
+{
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.endpointsByControllerNumber[@0] = endpoint;
+    [support setValue:[@{@0: [NSObject new]} mutableCopy] forKey:@"_controllers"];
+
+    if (![self requireLifecycleSelector:@selector(requestTerminalAdaptiveTriggerStop) onSupport:support] ||
+        ![self requireLifecycleSelector:@selector(resumeAdaptiveTriggerEffectsAfterForeground) onSupport:support] ||
+        ![self requireAdaptiveTriggerLifecycleStateOnSupport:support]) {
+        return;
+    }
+
+    [(id)support requestTerminalAdaptiveTriggerStop];
+    [self drainMainQueue];
+    [(id)support requestTerminalAdaptiveTriggerStop];
+    [self drainMainQueue];
+    [(id)support resumeAdaptiveTriggerEffectsAfterForeground];
+
+    XCTAssertEqual(endpoint.bothOffCount, 2u);
+    XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerStreamActive"] boolValue]);
+    XCTAssertFalse([[support valueForKey:@"_adaptiveTriggerForegroundActive"] boolValue]);
+}
+
+- (void)testMalformedDiagnosticIsRateLimitedAndContainsOnlyAllowlistedContext
+{
+    const uint8_t malformed[10] = { 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 };
+    const uint8_t off[10] = { 0 };
+    MLAdaptiveTriggerEndpointSpy *endpoint = [[MLAdaptiveTriggerEndpointSpy alloc] init];
+    MLAdaptiveTriggerControllerSupportSpy *support = [[MLAdaptiveTriggerControllerSupportSpy alloc] init];
+    support.resolvedEndpoint = endpoint;
+    [support.monotonicTimestamps addObjectsFromArray:@[@1.0, @1.25, @2.0, @2.25, @7.0, @7.25]];
+
+    for (NSUInteger occurrence = 0; occurrence < 3; occurrence++) {
+        [self waitForMainQueueAfterInvokingSupport:support
+                                  controllerNumber:3
+                                        eventFlags:DS_EFFECT_LEFT_TRIGGER
+                                          typeLeft:0x21
+                                         typeRight:0x05
+                                       leftPayload:malformed
+                                      rightPayload:off
+                                    beforeDraining:nil];
+    }
+
+    XCTAssertEqual(support.diagnosticMessages.count, 2u,
+                   @"identical errors must emit at most once per five seconds");
+    XCTAssertEqualObjects(support.diagnosticMessages.firstObject,
+                          @"Adaptive trigger controller=3 side=left type=0x21 result=malformed callback=1.000000 apply=1.250000 payload=ce07fb09 occurrence=1");
+    XCTAssertEqualObjects(support.diagnosticMessages.lastObject,
+                          @"Adaptive trigger controller=3 side=left type=0x21 result=malformed callback=7.000000 apply=7.250000 payload=ce07fb09 occurrence=3");
+    for (NSString *message in support.diagnosticMessages) {
+        XCTAssertEqual([message rangeOfString:@"mac" options:NSCaseInsensitiveSearch].location, NSNotFound);
+        XCTAssertEqual([message rangeOfString:@"user" options:NSCaseInsensitiveSearch].location, NSNotFound);
+        XCTAssertLessThan(message.length, 220u);
+    }
 }
 
 @end

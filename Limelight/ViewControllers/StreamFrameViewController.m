@@ -30,6 +30,12 @@
 - (id)initWithRefreshRate:(float)arg1 videoDynamicRange:(int)arg2;
 @end
 
+@interface ControllerSupport (MLAdaptiveTriggerLifecycle)
+- (void)requestTerminalAdaptiveTriggerStop;
+- (void)pauseAdaptiveTriggerEffectsForBackground;
+- (void)resumeAdaptiveTriggerEffectsAfterForeground;
+@end
+
 @implementation StreamFrameViewController {
     ControllerSupport *_controllerSupport;
     StreamManager *_streamMan;
@@ -341,6 +347,8 @@
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
+    [_controllerSupport resumeAdaptiveTriggerEffectsAfterForeground];
+
     // Stop the background timer, since we're foregrounded again
     if (_inactivityTimer != nil) {
         Log(LOG_I, @"Stopping inactivity timer after becoming active again");
@@ -352,6 +360,8 @@
 // This fires when the home button is pressed
 - (void)applicationDidEnterBackground:(UIApplication *)application {
     Log(LOG_I, @"Terminating stream immediately for backgrounding");
+
+    [_controllerSupport pauseAdaptiveTriggerEffectsForBackground];
 
     if (_inactivityTimer != nil) {
         [_inactivityTimer invalidate];
@@ -390,6 +400,8 @@
 }
 
 - (void)connectionTerminated:(int)errorCode {
+    [_controllerSupport requestTerminalAdaptiveTriggerStop];
+
     Log(LOG_I, @"Connection terminated: %d", errorCode);
     
     unsigned int portFlags = LiGetPortFlagsFromTerminationErrorCode(errorCode);

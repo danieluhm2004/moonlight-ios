@@ -14,6 +14,7 @@
 
 #import "DataManager.h"
 #include "Limelight.h"
+#include <openssl/sha.h>
 
 @import GameController;
 @import AudioToolbox;
@@ -47,6 +48,11 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     char _controllerNumbers;
     bool _multiController;
     bool _swapABXYButtons;
+
+    BOOL _adaptiveTriggerStreamActive;
+    BOOL _adaptiveTriggerForegroundActive;
+    NSMutableDictionary *_adaptiveTriggerEffectsBySlot;
+    NSMutableDictionary *_adaptiveTriggerDiagnosticStateByKey;
 }
 
 // UPDATE_BUTTON_FLAG(controller, flag, pressed)
@@ -85,18 +91,133 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     [controller.rightTriggerMotor setMotorAmplitude:rightTrigger];
 }
 
-static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
-                                     MLAdaptiveTriggerSide side,
-                                     uint8_t type,
-                                     NSData *payload)
+static NSString *adaptiveTriggerSideName(MLAdaptiveTriggerSide side)
 {
+    return side == MLAdaptiveTriggerSideLeft ? @"left" : @"right";
+}
+
+static NSString *adaptiveTriggerPayloadHash(NSData *payload)
+{
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(payload.bytes, payload.length, digest);
+    return [NSString stringWithFormat:@"%02x%02x%02x%02x",
+            digest[0], digest[1], digest[2], digest[3]];
+}
+
+-(void) initializeAdaptiveTriggerState
+{
+    _adaptiveTriggerStreamActive = YES;
+    _adaptiveTriggerForegroundActive = YES;
+    _adaptiveTriggerEffectsBySlot = [NSMutableDictionary dictionary];
+    _adaptiveTriggerDiagnosticStateByKey = [NSMutableDictionary dictionary];
+}
+
+-(instancetype) init
+{
+    self = [super init];
+    if (self) {
+        [self initializeAdaptiveTriggerState];
+    }
+    return self;
+}
+
+-(CFTimeInterval) adaptiveTriggerMonotonicTimestamp
+{
+    return NSProcessInfo.processInfo.systemUptime;
+}
+
+-(void) emitAdaptiveTriggerDiagnostic:(NSString *)message
+{
+    Log(LOG_W, @"%@", message);
+}
+
+-(void) recordAdaptiveTriggerDiagnosticForController:(uint16_t)controllerNumber
+                                                side:(MLAdaptiveTriggerSide)side
+                                                type:(uint8_t)type
+                                              result:(NSString *)result
+                                     callbackTime:(CFTimeInterval)callbackTime
+                                        applyTime:(CFTimeInterval)applyTime
+                                           payload:(NSData *)payload
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger diagnostics must remain on the main queue");
+    NSString *payloadHash = adaptiveTriggerPayloadHash(payload);
+    NSString *key = [NSString stringWithFormat:@"%u|%lu|%u|%@",
+                     controllerNumber, (unsigned long)side, type, result];
+    NSMutableDictionary *state = _adaptiveTriggerDiagnosticStateByKey[key];
+    if (state == nil) {
+        state = [NSMutableDictionary dictionary];
+        _adaptiveTriggerDiagnosticStateByKey[key] = state;
+    }
+
+    NSUInteger occurrence = [state[@"occurrence"] unsignedIntegerValue] + 1;
+    NSNumber *lastLog = state[@"lastLog"];
+    state[@"occurrence"] = @(occurrence);
+    if (lastLog != nil && applyTime - lastLog.doubleValue < 5.0) {
+        return;
+    }
+    state[@"lastLog"] = @(applyTime);
+
+    [self emitAdaptiveTriggerDiagnostic:
+     [NSString stringWithFormat:
+      @"Adaptive trigger controller=%u side=%@ type=0x%02x result=%@ callback=%.6f apply=%.6f payload=%@ occurrence=%lu",
+      controllerNumber, adaptiveTriggerSideName(side), type, result,
+      callbackTime, applyTime, payloadHash, (unsigned long)occurrence]];
+}
+
+-(void) applyAdaptiveTriggerEffect:(NSDictionary *)cachedEffect
+                        controller:(uint16_t)controllerNumber
+                              side:(MLAdaptiveTriggerSide)side
+                          endpoint:(id<MLAdaptiveTriggerEndpoint>)endpoint
+{
+    uint8_t type = [cachedEffect[@"type"] unsignedCharValue];
+    NSData *payload = cachedEffect[@"payload"];
+    CFTimeInterval callbackTime = [cachedEffect[@"callbackTime"] doubleValue];
+    CFTimeInterval applyTime = [self adaptiveTriggerMonotonicTimestamp];
+    if (endpoint == nil) {
+        [self recordAdaptiveTriggerDiagnosticForController:controllerNumber
+                                                      side:side
+                                                      type:type
+                                                    result:@"endpoint-unavailable"
+                                              callbackTime:callbackTime
+                                                 applyTime:applyTime
+                                                   payload:payload];
+        return;
+    }
+
     MLAdaptiveTriggerEffect effect;
     if (MLDecodeAdaptiveTrigger(type, payload.bytes, payload.length, &effect)) {
         [endpoint applyEffect:effect side:side];
+        return;
     }
-    else {
-        [endpoint setOffForSide:side];
+
+    [endpoint setOffForSide:side];
+    NSString *result = effect.kind == MLAdaptiveTriggerUnsupported ? @"unsupported" : @"malformed";
+    [self recordAdaptiveTriggerDiagnosticForController:controllerNumber
+                                                  side:side
+                                                  type:type
+                                                result:result
+                                          callbackTime:callbackTime
+                                             applyTime:applyTime
+                                               payload:payload];
+}
+
+-(void) cacheAdaptiveTriggerSide:(MLAdaptiveTriggerSide)side
+                            type:(uint8_t)type
+                         payload:(NSData *)payload
+                    callbackTime:(CFTimeInterval)callbackTime
+               controllerNumber:(uint16_t)controllerNumber
+{
+    NSNumber *slotKey = @(controllerNumber);
+    NSMutableDictionary *slotEffects = _adaptiveTriggerEffectsBySlot[slotKey];
+    if (slotEffects == nil) {
+        slotEffects = [NSMutableDictionary dictionary];
+        _adaptiveTriggerEffectsBySlot[slotKey] = slotEffects;
     }
+    slotEffects[@(side)] = @{
+        @"type": @(type),
+        @"payload": payload,
+        @"callbackTime": @(callbackTime),
+    };
 }
 
 -(void) setAdaptiveTriggers:(uint16_t)controllerNumber
@@ -106,20 +227,125 @@ static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
                 leftPayload:(NSData*)leftPayload
                rightPayload:(NSData*)rightPayload
 {
+    CFTimeInterval callbackTime = [self adaptiveTriggerMonotonicTimestamp];
     dispatch_async(dispatch_get_main_queue(), ^{
-        id<MLAdaptiveTriggerEndpoint> endpoint = [self endpointForControllerNumber:controllerNumber];
-        if (endpoint == nil) {
+        if (!self->_adaptiveTriggerStreamActive) {
             return;
         }
 
         if ((eventFlags & DS_EFFECT_LEFT_TRIGGER) != 0) {
-            applyAdaptiveTriggerSide(endpoint, MLAdaptiveTriggerSideLeft,
-                                     typeLeft, leftPayload);
+            [self cacheAdaptiveTriggerSide:MLAdaptiveTriggerSideLeft
+                                      type:typeLeft
+                                   payload:leftPayload
+                              callbackTime:callbackTime
+                         controllerNumber:controllerNumber];
         }
         if ((eventFlags & DS_EFFECT_RIGHT_TRIGGER) != 0) {
-            applyAdaptiveTriggerSide(endpoint, MLAdaptiveTriggerSideRight,
-                                     typeRight, rightPayload);
+            [self cacheAdaptiveTriggerSide:MLAdaptiveTriggerSideRight
+                                      type:typeRight
+                                   payload:rightPayload
+                              callbackTime:callbackTime
+                         controllerNumber:controllerNumber];
         }
+
+        if (!self->_adaptiveTriggerForegroundActive) {
+            return;
+        }
+
+        id<MLAdaptiveTriggerEndpoint> endpoint = [self endpointForControllerNumber:controllerNumber];
+        NSDictionary *slotEffects = self->_adaptiveTriggerEffectsBySlot[@(controllerNumber)];
+        if ((eventFlags & DS_EFFECT_LEFT_TRIGGER) != 0) {
+            [self applyAdaptiveTriggerEffect:slotEffects[@(MLAdaptiveTriggerSideLeft)]
+                                  controller:controllerNumber
+                                        side:MLAdaptiveTriggerSideLeft
+                                    endpoint:endpoint];
+        }
+        if ((eventFlags & DS_EFFECT_RIGHT_TRIGGER) != 0) {
+            [self applyAdaptiveTriggerEffect:slotEffects[@(MLAdaptiveTriggerSideRight)]
+                                  controller:controllerNumber
+                                        side:MLAdaptiveTriggerSideRight
+                                    endpoint:endpoint];
+        }
+    });
+}
+
+-(void) setBothAdaptiveTriggersOffForControllerNumber:(uint16_t)controllerNumber
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger cleanup must remain on the main queue");
+    if (@available(iOS 15.4, tvOS 15.4, *)) {
+        id<MLAdaptiveTriggerEndpoint> endpoint = [self endpointForControllerNumber:controllerNumber];
+        if (endpoint != nil) {
+            [endpoint setBothOff];
+            return;
+        }
+    }
+
+    if (@available(iOS 14.5, tvOS 14.5, *)) {
+        Controller *controller = [_controllers objectForKey:@(controllerNumber)];
+        GCExtendedGamepad *profile = controller.gamepad.extendedGamepad;
+        if ([profile isKindOfClass:[GCDualSenseGamepad class]]) {
+            GCDualSenseGamepad *gamepad = (GCDualSenseGamepad *)profile;
+            [gamepad.leftTrigger setModeOff];
+            [gamepad.rightTrigger setModeOff];
+        }
+    }
+}
+
+-(void) resetAdaptiveTriggerEffectsForControllerNumber:(uint16_t)controllerNumber
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger reset must remain on the main queue");
+    [_adaptiveTriggerEffectsBySlot removeObjectForKey:@(controllerNumber)];
+    [self setBothAdaptiveTriggersOffForControllerNumber:controllerNumber];
+}
+
+-(void) pauseAdaptiveTriggerEffectsForBackground
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger backgrounding must remain on the main queue");
+    _adaptiveTriggerForegroundActive = NO;
+    for (NSNumber *controllerNumber in [_controllers.allKeys copy]) {
+        [self setBothAdaptiveTriggersOffForControllerNumber:controllerNumber.unsignedShortValue];
+    }
+}
+
+-(void) resumeAdaptiveTriggerEffectsAfterForeground
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger foregrounding must remain on the main queue");
+    if (!_adaptiveTriggerStreamActive) {
+        return;
+    }
+
+    _adaptiveTriggerForegroundActive = YES;
+    for (NSNumber *controllerNumber in [_adaptiveTriggerEffectsBySlot.allKeys copy]) {
+        id<MLAdaptiveTriggerEndpoint> endpoint = [self endpointForControllerNumber:controllerNumber.unsignedShortValue];
+        NSDictionary *slotEffects = _adaptiveTriggerEffectsBySlot[controllerNumber];
+        for (NSNumber *sideNumber in @[@(MLAdaptiveTriggerSideLeft), @(MLAdaptiveTriggerSideRight)]) {
+            NSDictionary *effect = slotEffects[sideNumber];
+            if (effect != nil) {
+                [self applyAdaptiveTriggerEffect:effect
+                                      controller:controllerNumber.unsignedShortValue
+                                            side:sideNumber.unsignedIntegerValue
+                                        endpoint:endpoint];
+            }
+        }
+    }
+}
+
+-(void) stopAdaptiveTriggerStreamOnMainQueue
+{
+    NSAssert([NSThread isMainThread], @"Adaptive-trigger termination must remain on the main queue");
+    _adaptiveTriggerStreamActive = NO;
+    _adaptiveTriggerForegroundActive = NO;
+    [_adaptiveTriggerEffectsBySlot removeAllObjects];
+    NSArray<NSNumber *> *controllerNumbers = [_controllers.allKeys copy];
+    for (NSNumber *controllerNumber in controllerNumbers) {
+        [self setBothAdaptiveTriggersOffForControllerNumber:controllerNumber.unsignedShortValue];
+    }
+}
+
+-(void) requestTerminalAdaptiveTriggerStop
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self stopAdaptiveTriggerStreamOnMainQueue];
     });
 }
 
@@ -1061,6 +1287,7 @@ static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
             [self initializeControllerHaptics:limeController];
 
             [_controllers setObject:limeController forKey:[NSNumber numberWithInteger:controller.playerIndex]];
+            [self resetAdaptiveTriggerEffectsForControllerNumber:(uint16_t)controller.playerIndex];
             
             Log(LOG_I, @"Assigning controller index: %d", i);
             return limeController;
@@ -1131,6 +1358,7 @@ static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
 -(id) initWithConfig:(StreamConfiguration*)streamConfig delegate:(id<ControllerSupportDelegate>)delegate
 {
     self = [super init];
+    [self initializeAdaptiveTriggerState];
     
     _controllerStreamLock = [[NSLock alloc] init];
     _controllers = [[NSMutableDictionary alloc] init];
@@ -1205,6 +1433,9 @@ static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
         
         Controller* limeController = [self->_controllers objectForKey:[NSNumber numberWithInteger:controller.playerIndex]];
         if (limeController) {
+            // Resolve and stop the physical controller while it is still in the slot dictionary.
+            [self resetAdaptiveTriggerEffectsForControllerNumber:(uint16_t)controller.playerIndex];
+
             // Stop haptics on this controller
             [self cleanupControllerHaptics:limeController];
             
@@ -1288,6 +1519,15 @@ static void applyAdaptiveTriggerSide(id<MLAdaptiveTriggerEndpoint> endpoint,
 
 -(void) cleanup
 {
+    if ([NSThread isMainThread]) {
+        [self stopAdaptiveTriggerStreamOnMainQueue];
+    }
+    else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            [self stopAdaptiveTriggerStreamOnMainQueue];
+        });
+    }
+
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerConnectObserver];
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerDisconnectObserver];
     [[NSNotificationCenter defaultCenter] removeObserver:_mouseConnectObserver];
