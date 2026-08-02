@@ -31,6 +31,9 @@
 #import "SettingsViewController.h"
 #else
 #import <sys/utsname.h>
+#if DEBUG
+#import "AdaptiveTriggerDiagnosticsViewController.h"
+#endif
 #endif
 
 #import <VideoToolbox/VideoToolbox.h>
@@ -945,7 +948,16 @@ static NSMutableSet* hostList;
 #else
     // The settings button will direct the user into the Settings app on tvOS
     [_settingsButton setTarget:self];
+#if DEBUG
+    if (@available(tvOS 15.4, *)) {
+        [_settingsButton setAction:@selector(showAdaptiveTriggerDiagnostics)];
+    }
+    else {
+        [_settingsButton setAction:@selector(openTvSettings:)];
+    }
+#else
     [_settingsButton setAction:@selector(openTvSettings:)];
+#endif
     
     // Restore focus on the selected app on view controller pop navigation
     self.restoresFocusAfterTransition = NO;
@@ -1007,6 +1019,17 @@ static NSMutableSet* hostList;
 }
 
 #if TARGET_OS_TV
+#if DEBUG
+- (void)showAdaptiveTriggerDiagnostics
+{
+    if (@available(tvOS 15.4, *)) {
+        AdaptiveTriggerDiagnosticsViewController *diagnostics =
+            [[AdaptiveTriggerDiagnosticsViewController alloc] init];
+        [self.navigationController pushViewController:diagnostics animated:YES];
+    }
+}
+#endif
+
 -(void)handleCollectionViewLongPress:(UILongPressGestureRecognizer *)gestureRecognizer
 {
     // FIXME: Something is delaying touches so we only get to the Begin state

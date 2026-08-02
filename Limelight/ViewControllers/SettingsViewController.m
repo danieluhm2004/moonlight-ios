@@ -10,12 +10,19 @@
 #import "TemporarySettings.h"
 #import "DataManager.h"
 
+#if DEBUG
+#import "AdaptiveTriggerDiagnosticsViewController.h"
+#endif
+
 #import <VideoToolbox/VideoToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
 @implementation SettingsViewController {
     NSInteger _bitrate;
     NSInteger _lastSelectedResolutionIndex;
+#if DEBUG
+    UIButton *_adaptiveTriggerDiagnosticsButton;
+#endif
 }
 
 @dynamic overrideUserInterfaceStyle;
@@ -90,6 +97,15 @@ CGSize resolutionTable[RESOLUTION_TABLE_SIZE];
             highestViewY = currentViewY;
         }
     }
+
+#if DEBUG
+    if (_adaptiveTriggerDiagnosticsButton != nil) {
+        CGFloat diagnosticsWidth = MAX(0.0, self.scrollView.bounds.size.width - 40.0);
+        _adaptiveTriggerDiagnosticsButton.frame = CGRectMake(20.0, highestViewY + 20.0,
+                                                              diagnosticsWidth, 44.0);
+        highestViewY = CGRectGetMaxY(_adaptiveTriggerDiagnosticsButton.frame);
+    }
+#endif
     
     // Add a bit of padding so the view doesn't end right at the button of the display
     self.scrollView.contentSize = CGSizeMake(self.scrollView.contentSize.width,
@@ -263,7 +279,51 @@ BOOL isCustomResolution(CGSize res) {
     [self.bitrateSlider addTarget:self action:@selector(bitrateSliderMoved) forControlEvents:UIControlEventValueChanged];
     [self updateBitrateText];
     [self updateResolutionDisplayViewText];
+
+#if DEBUG
+    _adaptiveTriggerDiagnosticsButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_adaptiveTriggerDiagnosticsButton setTitle:@"DualSense trigger diagnostics"
+                                       forState:UIControlStateNormal];
+    [_adaptiveTriggerDiagnosticsButton addTarget:self
+                                          action:@selector(showAdaptiveTriggerDiagnostics)
+                                forControlEvents:UIControlEventTouchUpInside];
+    [self.scrollView addSubview:_adaptiveTriggerDiagnosticsButton];
+#endif
 }
+
+#if DEBUG
+- (UIAlertController *)adaptiveTriggerDiagnosticsUnavailableAlert
+{
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"DualSense diagnostics unavailable"
+                                            message:@"Adaptive-trigger diagnostics require iOS 15.4 or later."
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                             style:UIAlertActionStyleDefault
+                                           handler:nil]];
+    return alert;
+}
+
+- (void)showAdaptiveTriggerDiagnostics
+{
+    if (@available(iOS 15.4, tvOS 15.4, *)) {
+        AdaptiveTriggerDiagnosticsViewController *diagnostics =
+            [[AdaptiveTriggerDiagnosticsViewController alloc] init];
+        UINavigationController *navigation =
+            [[UINavigationController alloc] initWithRootViewController:diagnostics];
+        diagnostics.navigationItem.rightBarButtonItem =
+            [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                          target:diagnostics
+                                                          action:@selector(dismissDiagnostics)];
+        [self presentViewController:navigation animated:YES completion:nil];
+    }
+    else {
+        [self presentViewController:[self adaptiveTriggerDiagnosticsUnavailableAlert]
+                           animated:YES
+                         completion:nil];
+    }
+}
+#endif
 
 - (void) touchModeChanged {
     // Disable on-screen controls in absolute touch mode
