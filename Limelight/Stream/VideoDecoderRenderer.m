@@ -580,7 +580,8 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
         
     CMSampleBufferRef sampleBuffer;
     
-    CMSampleTimingInfo sampleTiming = {kCMTimeInvalid, CMTimeMake(du->presentationTimeMs, 1000), kCMTimeInvalid};
+    CMTime presentationTime = CMTimeMake((int64_t)du->rtpTimestamp, 90000);
+    CMSampleTimingInfo sampleTiming = {kCMTimeInvalid, presentationTime, kCMTimeInvalid};
     
     status = CMSampleBufferCreateReady(kCFAllocatorDefault,
                                   frameBlockBuffer,
